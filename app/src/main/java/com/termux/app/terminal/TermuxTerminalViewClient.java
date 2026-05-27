@@ -40,6 +40,7 @@ import com.termux.shared.termux.TermuxUtils;
 import com.termux.shared.termux.data.TermuxUrlUtils;
 import com.termux.shared.view.KeyboardUtils;
 import com.termux.shared.view.ViewUtils;
+import com.termux.app.ai.AiController;
 import com.termux.terminal.KeyHandler;
 import com.termux.terminal.TerminalEmulator;
 import com.termux.terminal.TerminalSession;
@@ -59,6 +60,8 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
 
     final TermuxTerminalSessionActivityClient mTermuxTerminalSessionActivityClient;
 
+    final AiController mAiController;
+
     /** Keeping track of the special keys acting as Ctrl and Fn for the soft keyboard and other hardware keys. */
     boolean mVirtualControlKeyDown, mVirtualFnKeyDown;
 
@@ -76,6 +79,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
     public TermuxTerminalViewClient(TermuxActivity activity, TermuxTerminalSessionActivityClient termuxTerminalSessionActivityClient) {
         this.mActivity = activity;
         this.mTermuxTerminalSessionActivityClient = termuxTerminalSessionActivityClient;
+        this.mAiController = new AiController(this);
     }
 
     public TermuxActivity getActivity() {
@@ -359,6 +363,10 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
 
     @Override
     public boolean onCodePoint(final int codePoint, boolean ctrlDown, TerminalSession session) {
+        if (!ctrlDown && mAiController.handleCodePoint(codePoint, session)) {
+            return true;
+        }
+
         if (mVirtualFnKeyDown) {
             int resultingKeyCode = -1;
             int resultingCodePoint = -1;
