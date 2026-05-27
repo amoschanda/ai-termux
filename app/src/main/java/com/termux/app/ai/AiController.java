@@ -19,9 +19,18 @@ import java.io.InputStreamReader;
 
 public class AiController {
     private static final String LOG_TAG = "AiController";
+    // NOTE: Replace this with your actual OpenRouter API Key before building.
     private static final String API_KEY = "REPLACE_WITH_YOUR_OPENROUTER_API_KEY";
     private static final String MODEL = "openai/gpt-oss-120b:free";
     private static final String API_URL = "https://openrouter.ai/api/v1/chat/completions";
+
+    // ANSI Color Codes
+    private static final String COLOR_RESET = "\u001B[0m";
+    private static final String COLOR_CYAN = "\u001B[36m";
+    private static final String COLOR_GREEN = "\u001B[32m";
+    private static final String COLOR_YELLOW = "\u001B[33m";
+    private static final String COLOR_RED = "\u001B[31m";
+    private static final String COLOR_BOLD = "\u001B[1m";
 
     private final TermuxTerminalViewClient mClient;
     private boolean mAiModeActive = false;
@@ -43,9 +52,10 @@ public class AiController {
     public void setAiModeActive(boolean active) {
         this.mAiModeActive = active;
         if (active) {
-            writeToTerminal("\r\n[AI Mode Activated. Type your request and press Enter]\r\n> ");
+            writeToTerminal("\r\n" + COLOR_CYAN + COLOR_BOLD + "[AI Mode Activated]" + COLOR_RESET + "\r\n");
+            writeToTerminal(COLOR_YELLOW + "Type your request in natural language (e.g., 'update my system' or 'install nodejs').\r\nType 'help' for info or 'exit' to return to shell." + COLOR_RESET + "\r\n> ");
         } else {
-            writeToTerminal("\r\n[AI Mode Deactivated]\r\n");
+            writeToTerminal("\r\n" + COLOR_CYAN + "[AI Mode Deactivated]" + COLOR_RESET + "\r\n");
             cancelCountdown();
         }
     }
@@ -72,7 +82,7 @@ public class AiController {
         if (mIsWaitingForConfirmation) {
             if (codePoint == 'c' || codePoint == 'C') {
                 cancelCountdown();
-                writeToTerminal("\r\n[Cancelled]\r\n> ");
+                writeToTerminal("\r\n" + COLOR_RED + "[Cancelled]" + COLOR_RESET + "\r\n> ");
                 return true;
             }
         }
@@ -81,7 +91,7 @@ public class AiController {
             String request = mInputBuffer.toString();
             mInputBuffer.setLength(0);
             writeToTerminal("\r\n");
-            processAiRequest(request, session);
+            handleRequest(request, session);
             return true;
         } else if (codePoint == 127 || codePoint == 8) { // Backspace
             if (mInputBuffer.length() > 0) {
@@ -94,6 +104,30 @@ public class AiController {
             writeToTerminal(String.valueOf((char) codePoint));
             return true;
         }
+    }
+
+    private void handleRequest(String request, TerminalSession session) {
+        String trimmed = request.trim().toLowerCase();
+        if (trimmed.equals("exit") || trimmed.equals("quit")) {
+            setAiModeActive(false);
+        } else if (trimmed.equals("help")) {
+            showHelp();
+        } else if (trimmed.equals("clear")) {
+            mHistory.clear();
+            writeToTerminal(COLOR_GREEN + "[Conversation history cleared]" + COLOR_RESET + "\r\n> ");
+        } else if (!trimmed.isEmpty()) {
+            processAiRequest(request, session);
+        } else {
+            writeToTerminal("> ");
+        }
+    }
+
+    private void showHelp() {
+        writeToTerminal(COLOR_BOLD + "AI Termux Help:" + COLOR_RESET + "\r\n");
+        writeToTerminal("- Describe what you want to do in plain English.\r\n");
+        writeToTerminal("- The AI suggests a command and waits 7 seconds before auto-running it.\r\n");
+        writeToTerminal("- Press 'c' during the countdown to cancel.\r\n");
+        writeToTerminal("- Commands: " + COLOR_YELLOW + "exit" + COLOR_RESET + " (back to shell), " + COLOR_YELLOW + "clear" + COLOR_RESET + " (reset AI memory), " + COLOR_YELLOW + "help" + COLOR_RESET + ".\r\n> ");
     }
 
     private void writeToTerminal(String text) {
@@ -114,12 +148,7 @@ public class AiController {
     }
 
     private void processAiRequest(String request, TerminalSession session) {
-        if (request.trim().equalsIgnoreCase("exit") || request.trim().equalsIgnoreCase("quit")) {
-            setAiModeActive(false);
-            return;
-        }
-
-        writeToTerminal("[Thinking...]\r\n");
+        writeToTerminal(COLOR_CYAN + "[Thinking...]" + COLOR_RESET + "\r\n");
         new Thread(() -> {
             try {
                 JSONObject payload = new JSONObject();
@@ -128,9 +157,9 @@ public class AiController {
                 if (mHistory.isEmpty()) {
                     JSONObject systemMessage = new JSONObject();
                     systemMessage.put("role", "system");
-                    systemMessage.put("content", "You are a Termux assistant. " +
-                        "Translate the user's natural language into a single shell command or a script. " +
-                        "Return ONLY the command(s) to be executed, no explanation, no markdown backticks.");
+                    systemMessage.put("content", "You are an expert Termux shell assistant. " +
+                        "Translate the user's natural language into the most accurate shell command(s). " +
+                        "IMPORTANT: Return ONLY the raw command(s). No markdown, no backticks, no explanation.");
                     mHistory.add(systemMessage);
                 }
                 
@@ -168,18 +197,22 @@ public class AiController {
                     String command = jsonResponse.getJSONArray("choices")
                             .getJSONObject(0).getJSONObject("message").getString("content").trim();
                     
+                    // Basic cleanup in case AI includes backticks
+                    command = command.replaceAll("```[a-z]*\n?", "").replaceAll("```", "");
+
                     JSONObject assistantMessage = new JSONObject();
                     assistantMessage.put("role", "assistant");
                     assistantMessage.put("content", command);
                     mHistory.add(assistantMessage);
 
-                    mHandler.post(() -> startExecutionCountdown(command, session));
+                    final String finalCommand = command;
+                    mHandler.post(() -> startExecutionCountdown(finalCommand, session));
                 } else {
-                    writeToTerminal("[Error: " + responseCode + "]\r\n> ");
+                    writeToTerminal(COLOR_RED + "[OpenRouter Error: " + responseCode + "]" + COLOR_RESET + "\r\n> ");
                 }
             } catch (Exception e) {
                 Logger.logStackTraceWithMessage(LOG_TAG, "AI request failed", e);
-                mHandler.post(() -> writeToTerminal("[AI Error: " + e.getMessage() + ". Falling back to shell.]\r\n> "));
+                mHandler.post(() -> writeToTerminal(COLOR_RED + "[AI Error: " + e.getMessage() + "]" + COLOR_RESET + "\r\n> "));
             }
         }).start();
     }
@@ -188,17 +221,17 @@ public class AiController {
         mIsWaitingForConfirmation = true;
         mPendingCommand = command;
         final int[] secondsLeft = {7};
-        writeToTerminal("Suggested command: " + command + "\r\n");
+        writeToTerminal(COLOR_GREEN + COLOR_BOLD + "Suggested command: " + COLOR_RESET + COLOR_YELLOW + command + COLOR_RESET + "\r\n");
         
         mCountdownRunnable = new Runnable() {
             @Override
             public void run() {
                 if (secondsLeft[0] > 0) {
-                    writeToTerminal("\rExecuting in " + secondsLeft[0] + "s (Type 'c' to cancel)... ");
+                    writeToTerminal("\r" + COLOR_CYAN + "Executing in " + secondsLeft[0] + "s (Type 'c' to cancel)... " + COLOR_RESET);
                     secondsLeft[0]--;
                     mHandler.postDelayed(this, 1000);
                 } else {
-                    writeToTerminal("\rExecuting...                                   \r\n");
+                    writeToTerminal("\r" + COLOR_GREEN + "Executing...                                   " + COLOR_RESET + "\r\n");
                     executeCommand(command, session);
                     mCountdownRunnable = null;
                 }
@@ -212,6 +245,5 @@ public class AiController {
         mPendingCommand = null;
         byte[] bytes = (command + "\n").getBytes(StandardCharsets.UTF_8);
         session.write(bytes, 0, bytes.length);
-        // We don't write "> " here because the shell prompt will appear after execution
     }
 }
